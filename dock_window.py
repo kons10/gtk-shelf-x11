@@ -338,9 +338,23 @@ class ModernDock(Gtk.ApplicationWindow):
         except: return False
 
 def on_launcher_clicked(self, button):
-        launcher_cmd = getattr(config, 'LAUNCHER_CMD', 'io.github.libredeb.lightpad.desktop')
-        # DesktopAppInfo を介さず、直接コマンドとして実行する
+        launcher_cmd = getattr(config, 'LAUNCHER_CMD', 'io.github.libredeb.lightpad')
+        
+        # まずは直接コマンドとして実行を試みる（rofiやio.github...用）
         try:
-            GLib.spawn_command_line_async(launcher_cmd)
+            # 引数がある場合も考慮して分割
+            import shutil
+            executable = launcher_cmd.split()[0]
+            if shutil.which(executable):
+                GLib.spawn_command_line_async(launcher_cmd)
+                return
         except Exception as e:
-            print(f"Command execution error: {e}")
+            print(f"Direct execution failed: {e}")
+
+        # コマンドが見つからない場合のみ、デスクトップファイルとして試す
+        app_info = Gio.DesktopAppInfo.new(launcher_cmd if launcher_cmd.endswith(".desktop") else f"{launcher_cmd}.desktop")
+        if app_info:
+            try: 
+                app_info.launch([], Gdk.AppLaunchContext())
+            except Exception as e: 
+                print(f"Desktop launch error: {e}")

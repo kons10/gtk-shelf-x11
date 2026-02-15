@@ -337,16 +337,10 @@ class ModernDock(Gtk.ApplicationWindow):
             return "dark" in theme or self.settings.get_property("gtk-application-prefer-dark-theme")
         except: return False
 
-    def on_launcher_clicked(self, button):
+def on_launcher_clicked(self, button):
         launcher_cmd = getattr(config, 'LAUNCHER_CMD', 'io.github.libredeb.lightpad.desktop')
-        app_info = Gio.DesktopAppInfo.new(launcher_cmd)
-        if app_info:
-            try: 
-                app_info.launch([], Gdk.AppLaunchContext())
-            except Exception as e: 
-                print(f"Launch error: {e}")
-        else:
-            try:
-                GLib.spawn_command_line_async(launcher_cmd)
-            except Exception as e:
-                print(f"Command execution error: {e}")
+        # DesktopAppInfo を介さず、直接コマンドとして実行する
+        try:
+            GLib.spawn_command_line_async(launcher_cmd)
+        except Exception as e:
+            print(f"Command execution error: {e}")

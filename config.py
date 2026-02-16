@@ -8,9 +8,9 @@ WIDTH_RATIO = 1.0     # 画面横幅に対するシェルフの幅
 CONTROL_RATIO = 0.8   # 右側ステータスバーの高さの割合 (1.0でシェルフと同じ高さ)
 
 # ランチャー設定
-# 起動したいアプリの .desktop ファイルIDを指定してね
-# 例: "io.github.libredeb.lightpad.desktop" や "firefox.desktop" など
-LAUNCHER_CMD = "io.github.libredeb.lightpad.desktop"
+# 起動したいアプリを指定してね
+# 例: "io.github.libredeb.lightpad" や "rofi" など
+LAUNCHER_CMD = "rofi -show drun"
 
 # --- アニメーション設定 (New!) ---
 ANIMATION_ENABLED = True     # アニメーションを有効にするか

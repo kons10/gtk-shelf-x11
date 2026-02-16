@@ -1,6 +1,7 @@
 import os
 import datetime
 import gi
+import shutil
 
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib, Gio, GdkPixbuf
@@ -337,13 +338,13 @@ class ModernDock(Gtk.ApplicationWindow):
             return "dark" in theme or self.settings.get_property("gtk-application-prefer-dark-theme")
         except: return False
 
-def on_launcher_clicked(self, button):
+    def on_launcher_clicked(self, button):
+        # configからコマンドを取得、なければデフォルト値
         launcher_cmd = getattr(config, 'LAUNCHER_CMD', 'io.github.libredeb.lightpad')
         
-        # まずは直接コマンドとして実行を試みる（rofiやio.github...用）
+        # 1. まずは直接コマンドとして実行を試みる (rofi やそのままのコマンド用)
         try:
-            # 引数がある場合も考慮して分割
-            import shutil
+            # 引数がある場合も考慮して実行ファイル名だけ取り出す
             executable = launcher_cmd.split()[0]
             if shutil.which(executable):
                 GLib.spawn_command_line_async(launcher_cmd)
@@ -351,10 +352,15 @@ def on_launcher_clicked(self, button):
         except Exception as e:
             print(f"Direct execution failed: {e}")
 
-        # コマンドが見つからない場合のみ、デスクトップファイルとして試す
-        app_info = Gio.DesktopAppInfo.new(launcher_cmd if launcher_cmd.endswith(".desktop") else f"{launcher_cmd}.desktop")
+        # 2. コマンドが見つからない場合のみ、デスクトップファイルとして試す
+        # .desktop が付いていなければ補完する
+        desktop_id = launcher_cmd if launcher_cmd.endswith(".desktop") else f"{launcher_cmd}.desktop"
+        app_info = Gio.DesktopAppInfo.new(desktop_id)
+        
         if app_info:
             try: 
                 app_info.launch([], Gdk.AppLaunchContext())
             except Exception as e: 
                 print(f"Desktop launch error: {e}")
+        else:
+            print(f"Could not find command or desktop file: {launcher_cmd}")

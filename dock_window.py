@@ -237,7 +237,7 @@ class ModernDock(Gtk.ApplicationWindow):
             if hasattr(child, 'win_id'):
                 current_buttons[child.win_id] = child
 
-# --- 削除処理 ---
+        # --- 削除処理 ---
         for win_id, btn in list(current_buttons.items()):
             if win_id not in window_ids:
                 if config.ANIMATION_ENABLED:

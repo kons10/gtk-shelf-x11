@@ -61,5 +61,3 @@ You can customize the dock by editing `config.py`. Key settings include:
 ## License
 
 GNU GPL 3.0
-
-```

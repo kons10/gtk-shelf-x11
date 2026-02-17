@@ -2,7 +2,7 @@
 
 ![video gif](https://github.com/user-attachments/assets/3e0365d2-7ddd-4371-8bcd-01a97d692acc)
 
-A lightweight and modern desktop shelf for Linux (X11) built with GTK3 and Python. It provides a functional taskbar and application launcher with a focus on aesthetics and smooth interaction, specifically optimized for window managers like Openbox.
+A lightweight and modern desktop shelf for Linux (X11) built with GTK3 and Python. It provides a functional taskbar and application launcher with a focus on aesthetics and smooth interaction, specifically optimized for window managers like Openbox and Many WM.
 
 ## Features
 

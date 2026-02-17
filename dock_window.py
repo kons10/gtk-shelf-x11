@@ -237,13 +237,18 @@ class ModernDock(Gtk.ApplicationWindow):
             if hasattr(child, 'win_id'):
                 current_buttons[child.win_id] = child
 
-        # --- 削除処理 ---
-        # 新しいリストに含まれないIDのボタンを削除
+# --- 削除処理 ---
         for win_id, btn in list(current_buttons.items()):
             if win_id not in window_ids:
-                # フェードアウトして消すなどの処理も入れられるが、今回は即削除
-                self.center_box.remove(btn)
-                del current_buttons[win_id]
+                if config.ANIMATION_ENABLED:
+                    # win_idの管理から外して、アニメーション後に削除
+                    del current_buttons[win_id]
+                    # 重複して削除が走らないように、識別子を消しておく
+                    del btn.win_id 
+                    self._animate_button_exit(btn)
+                else:
+                    self.center_box.remove(btn)
+                    del current_buttons[win_id]
 
         # --- 追加処理 ---
         # 新しいIDを追加
@@ -313,6 +318,28 @@ class ModernDock(Gtk.ApplicationWindow):
         )
         anim.start()
         # メモリリーク防止のため参照を保持（簡易実装）
+        self.running_animations.append(anim)
+
+    def _animate_button_exit(self, widget):
+        """ボタンが消える時のアニメーション"""
+        easing_func = getattr(animation.Easing, config.ANIMATION_EASING, animation.Easing.ease_out_quad)
+
+        def on_update(val):
+            # 1.0 -> 0.0 へ透明度を変化させる
+            widget.set_opacity(1.0 - val)
+            
+        def on_complete():
+            # アニメーション完了後に実際に親から削除する
+            self.center_box.remove(widget)
+            widget.destroy()
+
+        anim = animation.Animator(
+            duration_ms=config.ANIMATION_DURATION,
+            update_callback=on_update,
+            complete_callback=on_complete,
+            easing_func=easing_func
+        )
+        anim.start()
         self.running_animations.append(anim)
 
     def on_task_button_clicked(self, button, win_id):

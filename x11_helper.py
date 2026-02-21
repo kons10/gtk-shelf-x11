@@ -37,6 +37,10 @@ class X11Helper:
                 self.atom_state_skip_taskbar = self.display.intern_atom('_NET_WM_STATE_SKIP_TASKBAR')
                 self.atom_state_skip_pager = self.display.intern_atom('_NET_WM_STATE_SKIP_PAGER')
                 self.atom_atom = self.display.intern_atom('ATOM')
+                
+                # 自分を識別するための独自のAtom（タグ）
+                self.atom_skip_shelf = self.display.intern_atom('_GTK_SHELF_SKIP')
+                
             except Exception as e:
                 print(f"X11 init failed: {e}")
                 self.enabled = False
@@ -51,7 +55,6 @@ class X11Helper:
         self.root.change_attributes(event_mask=X.PropertyChangeMask)
         
         # X11のソケットをGLibで監視する
-        # これにより、イベントが来たときだけ処理が走るようになる（省エネ！）
         try:
             fd = self.display.display.socket.fileno()
             GLib.io_add_watch(fd, GLib.IO_IN, self._on_x_event)
@@ -62,37 +65,54 @@ class X11Helper:
     def _on_x_event(self, source, condition):
         """X11からイベントが来たときに呼ばれる"""
         try:
-            # 溜まっているイベントがある限り処理する
             while self.display.pending_events() > 0:
                 event = self.display.next_event()
-                
-                # 興味があるのはプロパティの変更だけ
                 if event.type == X.PropertyNotify:
                     if event.atom in [self.atom_client_list, self.atom_active_window]:
-                        # コールバックを実行 (dock_window側の update_window_list を呼ぶ)
                         if self.callback:
                             self.callback()
         except Exception as e:
             print(f"Error in event loop: {e}")
-            
-        return True # 監視を継続
+        return True
 
     def set_dock_properties(self, win_id):
-        """ウィンドウをドックとしてX11レベルで明示的に設定する"""
+        """ウィンドウをドックとして設定し、独自の識別タグも付与する"""
         if not self.enabled: return
 
         try:
             window = self.display.create_resource_object('window', win_id)
             
-            # _NET_WM_WINDOW_TYPE を DOCK に設定
+            # 標準的なドック設定
             window.change_property(self.atom_window_type, self.atom_atom, 32, [self.atom_type_dock])
-            
-            # _NET_WM_STATE に SKIP_TASKBAR と SKIP_PAGER を設定
             window.change_property(self.atom_wm_state, self.atom_atom, 32, [self.atom_state_skip_taskbar, self.atom_state_skip_pager])
+            
+            # 独自の識別用タグを付与 (1を設定)
+            window.change_property(self.atom_skip_shelf, self.atom_cardinal, 32, [1])
             
             self.display.flush()
         except Exception as e:
             print(f"Error setting dock properties: {e}")
+
+    def is_ignored_window(self, win_id):
+        """指定したウィンドウが、自分自身（またはドック）であるかチェックする"""
+        if not self.enabled: return False
+        
+        try:
+            win = self.display.create_resource_object('window', win_id)
+            
+            # 独自のタグが付いているか確認
+            prop = win.get_full_property(self.atom_skip_shelf, self.atom_cardinal)
+            if prop and prop.value and prop.value[0] == 1:
+                return True
+                
+            # または、標準的なドックタイプであるか確認
+            type_prop = win.get_full_property(self.atom_window_type, self.atom_atom)
+            if type_prop and self.atom_type_dock in type_prop.value:
+                return True
+                
+        except:
+            pass
+        return False
 
     def set_strut(self, win_id, x, y, width, height, screen_width, screen_height):
         """ウィンドウマネージャーにドックの領域（Strut）を予約する"""
@@ -100,97 +120,59 @@ class X11Helper:
 
         try:
             window = self.display.create_resource_object('window', win_id)
-            
-            # 部分的なStrut (新しい規格)
-            strut_partial = [
-                0, 0, 0, height,  # 予約する幅/高さ
-                0, 0, 0, 0,       # 左右の開始・終了位置（使わない）
-                0, 0,             # 上の開始・終了位置（使わない）
-                x, x + width      # 下の開始・終了位置（ドックの横幅に合わせる）
-            ]
-            
-            # 古い規格 (画面幅いっぱい予約しちゃうやつ)
+            strut_partial = [0, 0, 0, height, 0, 0, 0, 0, 0, 0, x, x + width]
             strut = [0, 0, 0, height]
-
-            # プロパティを設定
             window.change_property(self.atom_strut_partial, self.atom_cardinal, 32, strut_partial)
             window.change_property(self.atom_strut, self.atom_cardinal, 32, strut)
             self.display.flush()
-            
         except Exception as e:
             print(f"Error setting strut: {e}")
 
     def get_window_list(self):
-        """現在開いているウィンドウのIDリストを取得する"""
-        if not self.enabled:
-            return []
-        
+        if not self.enabled: return []
         try:
             prop = self.root.get_full_property(self.atom_client_list, X.AnyPropertyType)
-            if not prop:
-                return []
+            if not prop: return []
             return prop.value
         except Exception as e:
             print(f"Error getting window list: {e}")
             return []
 
     def get_window_class(self, win_id):
-        """ウィンドウIDからクラス名(アプリ名)を取得する"""
-        if not self.enabled:
-            return None
-            
+        if not self.enabled: return None
         try:
             win = self.display.create_resource_object('window', win_id)
             wm_class = win.get_wm_class()
-            if wm_class:
-                return wm_class[1].lower()
-        except:
-            pass
+            if wm_class: return wm_class[1].lower()
+        except: pass
         return None
 
     def get_active_window(self):
-        """現在アクティブな（フォーカスされている）ウィンドウIDを取得する"""
-        if not self.enabled:
-            return None
-        
+        if not self.enabled: return None
         try:
             prop = self.root.get_full_property(self.atom_active_window, X.AnyPropertyType)
-            if prop and prop.value:
-                return prop.value[0]
+            if prop and prop.value: return prop.value[0]
         except Exception as e:
             print(f"Error getting active window: {e}")
         return None
 
     def activate_window(self, win_id):
-        """指定したウィンドウを最前面に持ってくる"""
         if not self.enabled: return
-
         try:
             win = self.display.create_resource_object('window', win_id)
             data = [2, X.CurrentTime, 0, 0, 0]
-            ev = xevent.ClientMessage(
-                window=win, 
-                client_type=self.atom_active_window, 
-                data=(32, data)
-            )
+            ev = xevent.ClientMessage(window=win, client_type=self.atom_active_window, data=(32, data))
             self.root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
             self.display.flush()
         except Exception as e:
             print(f"Error activating window: {e}")
 
     def minimize_window(self, win_id):
-        """指定したウィンドウを最小化する"""
         if not self.enabled: return
-
         try:
             win = self.display.create_resource_object('window', win_id)
-            # IconicState = 3
             data = [3, 0, 0, 0, 0]
-            ev = xevent.ClientMessage(
-                window=win,
-                client_type=self.atom_wm_change_state,
-                data=(32, data)
-            )
+            ev = xevent.ClientMessage(window=win, client_type=self.atom_wm_change_state, data=(32, data))
             self.root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
             self.display.flush()
         except Exception as e:

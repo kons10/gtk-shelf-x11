@@ -29,6 +29,14 @@ class X11Helper:
                 self.atom_strut = self.display.intern_atom('_NET_WM_STRUT')
                 self.atom_strut_partial = self.display.intern_atom('_NET_WM_STRUT_PARTIAL')
                 self.atom_cardinal = self.display.intern_atom('CARDINAL')
+                
+                # ウィンドウのタイプと状態用のAtom (ドック設定用)
+                self.atom_window_type = self.display.intern_atom('_NET_WM_WINDOW_TYPE')
+                self.atom_type_dock = self.display.intern_atom('_NET_WM_WINDOW_TYPE_DOCK')
+                self.atom_wm_state = self.display.intern_atom('_NET_WM_STATE')
+                self.atom_state_skip_taskbar = self.display.intern_atom('_NET_WM_STATE_SKIP_TASKBAR')
+                self.atom_state_skip_pager = self.display.intern_atom('_NET_WM_STATE_SKIP_PAGER')
+                self.atom_atom = self.display.intern_atom('ATOM')
             except Exception as e:
                 print(f"X11 init failed: {e}")
                 self.enabled = False
@@ -69,6 +77,23 @@ class X11Helper:
             
         return True # 監視を継続
 
+    def set_dock_properties(self, win_id):
+        """ウィンドウをドックとしてX11レベルで明示的に設定する"""
+        if not self.enabled: return
+
+        try:
+            window = self.display.create_resource_object('window', win_id)
+            
+            # _NET_WM_WINDOW_TYPE を DOCK に設定
+            window.change_property(self.atom_window_type, self.atom_atom, 32, [self.atom_type_dock])
+            
+            # _NET_WM_STATE に SKIP_TASKBAR と SKIP_PAGER を設定
+            window.change_property(self.atom_wm_state, self.atom_atom, 32, [self.atom_state_skip_taskbar, self.atom_state_skip_pager])
+            
+            self.display.flush()
+        except Exception as e:
+            print(f"Error setting dock properties: {e}")
+
     def set_strut(self, win_id, x, y, width, height, screen_width, screen_height):
         """ウィンドウマネージャーにドックの領域（Strut）を予約する"""
         if not self.enabled: return
@@ -77,11 +102,6 @@ class X11Helper:
             window = self.display.create_resource_object('window', win_id)
             
             # 部分的なStrut (新しい規格)
-            # [left, right, top, bottom, 
-            #  left_start_y, left_end_y, right_start_y, right_end_y, 
-            #  top_start_x, top_end_x, bottom_start_x, bottom_end_x]
-            # ドックは「下」にあるので bottom を設定する
-            
             strut_partial = [
                 0, 0, 0, height,  # 予約する幅/高さ
                 0, 0, 0, 0,       # 左右の開始・終了位置（使わない）

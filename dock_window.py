@@ -30,6 +30,7 @@ class ModernDock(Gtk.ApplicationWindow):
         self.set_decorated(False)
         self.set_keep_above(True)
         self.stick()
+        # GTKレベルでのタスクバー非表示設定
         self.set_skip_taskbar_hint(True)
         self.set_skip_pager_hint(True)
 
@@ -129,7 +130,6 @@ class ModernDock(Gtk.ApplicationWindow):
         pill_padding_v = 0 
         pill_padding_h = 12
         
-        # CSS transition はホバーエフェクト用に残しておく
         css = f"""
         window {{ background-color: transparent; }}
         .dock-container {{
@@ -189,14 +189,17 @@ class ModernDock(Gtk.ApplicationWindow):
         if self.x11.enabled:
             try:
                 win_id = self.get_window().get_xid()
+                # 領域確保
                 self.x11.set_strut(
                     win_id, 
                     x, y, 
                     self.dock_w, config.DOCK_HEIGHT,
                     geo.width, geo.height
                 )
+                # Xlib経由でドックのプロパティを直接設定（タスクバーから隠す）
+                self.x11.set_dock_properties(win_id)
             except Exception as e:
-                print(f"Failed to set strut: {e}")
+                print(f"Failed to set X11 properties: {e}")
                 
         return False
 
@@ -230,8 +233,6 @@ class ModernDock(Gtk.ApplicationWindow):
         """ウィンドウリストを更新する（差分更新・アニメーション付き）"""
         window_ids = self.x11.get_window_list()
         
-        # 現在表示されているボタンの情報を取得
-        # {win_id: button_widget} の辞書を作る
         current_buttons = {}
         for child in self.center_box.get_children():
             if hasattr(child, 'win_id'):
@@ -241,9 +242,7 @@ class ModernDock(Gtk.ApplicationWindow):
         for win_id, btn in list(current_buttons.items()):
             if win_id not in window_ids:
                 if config.ANIMATION_ENABLED:
-                    # win_idの管理から外して、アニメーション後に削除
                     del current_buttons[win_id]
-                    # 重複して削除が走らないように、識別子を消しておく
                     del btn.win_id 
                     self._animate_button_exit(btn)
                 else:
@@ -251,11 +250,9 @@ class ModernDock(Gtk.ApplicationWindow):
                     del current_buttons[win_id]
 
         # --- 追加処理 ---
-        # 新しいIDを追加
         icon_size = int(config.DOCK_HEIGHT * 0.7)
         
         for win_id in window_ids:
-            # すでに表示されているならスキップ
             if win_id in current_buttons:
                 continue
 
@@ -272,20 +269,17 @@ class ModernDock(Gtk.ApplicationWindow):
 
                 btn = Gtk.Button()
                 btn.get_style_context().add_class("app-button")
-                btn.win_id = win_id  # IDを紐付け
+                btn.win_id = win_id
                 
                 img = Gtk.Image()
                 if pixbuf: img.set_from_pixbuf(pixbuf)
                 btn.add(img)
                 
-                # イベント接続
                 btn.connect("clicked", self.on_task_button_clicked, win_id)
                 
-                # ボックスに追加して表示
                 self.center_box.pack_start(btn, False, False, 0)
                 btn.show_all()
                 
-                # --- アニメーション開始 ---
                 if config.ANIMATION_ENABLED:
                     self._animate_button_entry(btn)
 
@@ -296,15 +290,10 @@ class ModernDock(Gtk.ApplicationWindow):
         return True
 
     def _animate_button_entry(self, widget):
-        """ボタン出現時のアニメーションを実行"""
-        # イージング関数を選択
         easing_func = getattr(animation.Easing, config.ANIMATION_EASING, animation.Easing.ease_out_quad)
-        
-        # 初期状態: 透明
         widget.set_opacity(0.0)
         
         def on_update(val):
-            # 透明度: 0 -> 1 だけ変化させる（マージン操作は警告の原因になるので廃止）
             widget.set_opacity(val)
             
         def on_complete():
@@ -317,19 +306,15 @@ class ModernDock(Gtk.ApplicationWindow):
             easing_func=easing_func
         )
         anim.start()
-        # メモリリーク防止のため参照を保持（簡易実装）
         self.running_animations.append(anim)
 
     def _animate_button_exit(self, widget):
-        """ボタンが消える時のアニメーション"""
         easing_func = getattr(animation.Easing, config.ANIMATION_EASING, animation.Easing.ease_out_quad)
 
         def on_update(val):
-            # 1.0 -> 0.0 へ透明度を変化させる
             widget.set_opacity(1.0 - val)
             
         def on_complete():
-            # アニメーション完了後に実際に親から削除する
             self.center_box.remove(widget)
             widget.destroy()
 
@@ -366,12 +351,9 @@ class ModernDock(Gtk.ApplicationWindow):
         except: return False
 
     def on_launcher_clicked(self, button):
-        # configからコマンドを取得、なければデフォルト値
-        launcher_cmd = getattr(config, 'LAUNCHER_CMD', 'io.github.libredeb.lightpad')
+        launcher_cmd = getattr(config, 'LAUNCHER_CMD')
         
-        # 1. まずは直接コマンドとして実行を試みる (rofi やそのままのコマンド用)
         try:
-            # 引数がある場合も考慮して実行ファイル名だけ取り出す
             executable = launcher_cmd.split()[0]
             if shutil.which(executable):
                 GLib.spawn_command_line_async(launcher_cmd)
@@ -379,8 +361,6 @@ class ModernDock(Gtk.ApplicationWindow):
         except Exception as e:
             print(f"Direct execution failed: {e}")
 
-        # 2. コマンドが見つからない場合のみ、デスクトップファイルとして試す
-        # .desktop が付いていなければ補完する
         desktop_id = launcher_cmd if launcher_cmd.endswith(".desktop") else f"{launcher_cmd}.desktop"
         app_info = Gio.DesktopAppInfo.new(desktop_id)
         

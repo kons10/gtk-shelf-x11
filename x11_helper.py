@@ -15,6 +15,8 @@ class X11Helper:
     def __init__(self):
         self.enabled = HAS_XLIB
         self.callback = None
+        self._ignore_cache = {}
+        
         if self.enabled:
             try:
                 self.display = display.Display()
@@ -30,15 +32,14 @@ class X11Helper:
                 self.atom_strut_partial = self.display.intern_atom('_NET_WM_STRUT_PARTIAL')
                 self.atom_cardinal = self.display.intern_atom('CARDINAL')
                 
-                # ウィンドウのタイプと状態用のAtom (ドック設定用)
+                # ウィンドウのタイプと状態用のAtom
                 self.atom_window_type = self.display.intern_atom('_NET_WM_WINDOW_TYPE')
                 self.atom_type_dock = self.display.intern_atom('_NET_WM_WINDOW_TYPE_DOCK')
+                self.atom_type_desktop = self.display.intern_atom('_NET_WM_WINDOW_TYPE_DESKTOP')
                 self.atom_wm_state = self.display.intern_atom('_NET_WM_STATE')
                 self.atom_state_skip_taskbar = self.display.intern_atom('_NET_WM_STATE_SKIP_TASKBAR')
                 self.atom_state_skip_pager = self.display.intern_atom('_NET_WM_STATE_SKIP_PAGER')
                 self.atom_atom = self.display.intern_atom('ATOM')
-                
-                # 自分を識別するための独自のAtom（タグ）
                 self.atom_skip_shelf = self.display.intern_atom('_GTK_SHELF_SKIP')
                 
             except Exception as e:
@@ -46,15 +47,9 @@ class X11Helper:
                 self.enabled = False
 
     def start_monitoring(self, callback):
-        """X11のイベント監視を開始する (GLibのループに統合)"""
         if not self.enabled: return
-
         self.callback = callback
-        
-        # ルートウィンドウのプロパティ変更（ウィンドウリストやアクティブウィンドウの変化）を監視
         self.root.change_attributes(event_mask=X.PropertyChangeMask)
-        
-        # X11のソケットをGLibで監視する
         try:
             fd = self.display.display.socket.fileno()
             GLib.io_add_watch(fd, GLib.IO_IN, self._on_x_event)
@@ -63,61 +58,75 @@ class X11Helper:
             print(f"Failed to start X11 monitoring: {e}")
 
     def _on_x_event(self, source, condition):
-        """X11からイベントが来たときに呼ばれる"""
         try:
+            needs_update = False
             while self.display.pending_events() > 0:
                 event = self.display.next_event()
                 if event.type == X.PropertyNotify:
                     if event.atom in [self.atom_client_list, self.atom_active_window]:
-                        if self.callback:
-                            self.callback()
+                        needs_update = True
+            
+            if needs_update and self.callback:
+                self.callback()
         except Exception as e:
             print(f"Error in event loop: {e}")
         return True
 
     def set_dock_properties(self, win_id):
-        """ウィンドウをドックとして設定し、独自の識別タグも付与する"""
         if not self.enabled: return
-
         try:
             window = self.display.create_resource_object('window', win_id)
-            
-            # 標準的なドック設定
             window.change_property(self.atom_window_type, self.atom_atom, 32, [self.atom_type_dock])
             window.change_property(self.atom_wm_state, self.atom_atom, 32, [self.atom_state_skip_taskbar, self.atom_state_skip_pager])
-            
-            # 独自の識別用タグを付与 (1を設定)
             window.change_property(self.atom_skip_shelf, self.atom_cardinal, 32, [1])
-            
             self.display.flush()
         except Exception as e:
             print(f"Error setting dock properties: {e}")
 
     def is_ignored_window(self, win_id):
-        """指定したウィンドウが、自分自身（またはドック）であるかチェックする"""
+        """指定したウィンドウが除外対象かチェックする (状態チェックを強化)"""
         if not self.enabled: return False
         
+        # タイトルが取得できないなどの一時的な問題でキャッシュしたくないので、
+        # 基本的にプロパティベースの除外だけキャッシュする
+        if win_id in self._ignore_cache:
+            return self._ignore_cache[win_id]
+            
         try:
             win = self.display.create_resource_object('window', win_id)
             
-            # 独自のタグが付いているか確認
+            # 1. 独自のタグが付いているか (自分自身)
             prop = win.get_full_property(self.atom_skip_shelf, self.atom_cardinal)
             if prop and prop.value and prop.value[0] == 1:
+                self._ignore_cache[win_id] = True
                 return True
                 
-            # または、標準的なドックタイプであるか確認
+            # 2. ウィンドウタイプを確認 (ドックやデスクトップ)
             type_prop = win.get_full_property(self.atom_window_type, self.atom_atom)
-            if type_prop and self.atom_type_dock in type_prop.value:
-                return True
-                
+            if type_prop and type_prop.value:
+                if self.atom_type_dock in type_prop.value or self.atom_type_desktop in type_prop.value:
+                    self._ignore_cache[win_id] = True
+                    return True
+
+            # 3. _NET_WM_STATE を確認 (SKIP_TASKBAR が設定されているか)
+            # デスクトップアイコン描画ウィンドウなどはこれが設定されている
+            state_prop = win.get_full_property(self.atom_wm_state, self.atom_atom)
+            if state_prop and state_prop.value:
+                if self.atom_state_skip_taskbar in state_prop.value:
+                    self._ignore_cache[win_id] = True
+                    return True
         except:
             pass
+            
         return False
 
-    def set_strut(self, win_id, x, y, width, height, screen_width, screen_height):
-        """ウィンドウマネージャーにドックの領域（Strut）を予約する"""
-        if not self.enabled: return
+    def clear_cache(self, current_ids):
+        dead_ids = [wid for wid in self._ignore_cache if wid not in current_ids]
+        for wid in dead_ids:
+            del self._ignore_cache[wid]
 
+    def set_strut(self, win_id, x, y, width, height, screen_width, screen_height):
+        if not self.enabled: return
         try:
             window = self.display.create_resource_object('window', win_id)
             strut_partial = [0, 0, 0, height, 0, 0, 0, 0, 0, 0, x, x + width]

@@ -20,12 +20,11 @@ class ModernDock(Gtk.ApplicationWindow):
         
         # X11ヘルパーの初期化
         self.x11 = X11Helper()
+        self._update_timer_id = None
         
-        # 初期サイズ設定
         self.dock_w = 0
         self.update_geometry()
 
-        # ウィンドウ設定
         self.set_resizable(False)
         self.set_decorated(False)
         self.set_keep_above(True)
@@ -33,13 +32,11 @@ class ModernDock(Gtk.ApplicationWindow):
         self.set_skip_taskbar_hint(True)
         self.set_skip_pager_hint(True)
 
-        # 透過設定
         self.set_app_paintable(True)
         visual = self.get_screen().get_rgba_visual()
         if visual and self.get_screen().is_composited():
             self.set_visual(visual)
 
-        # CSS設定
         self.css_provider = Gtk.CssProvider()
         Gtk.StyleContext.add_provider_for_screen(
             Gdk.Screen.get_default(), 
@@ -51,15 +48,12 @@ class ModernDock(Gtk.ApplicationWindow):
         self.settings.connect("notify::gtk-theme-name", lambda s, p: self.update_css())
         self.update_css()
         
-        # アイコン関連
         self.icon_theme = Gtk.IconTheme.get_default()
         self.icon_cache = {}
         self.build_icon_cache()
 
-        # 実行中のアニメーション保持用
         self.running_animations = []
             
-        # --- レイアウト構築 ---
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         self.main_box.get_style_context().add_class("dock-container")
         self.add(self.main_box)
@@ -68,18 +62,20 @@ class ModernDock(Gtk.ApplicationWindow):
         self._setup_taskbar()
         self._setup_status_area()
         
-        # 定期実行タスク
         GLib.timeout_add_seconds(1, self.update_clock)
         
-        # X11イベント監視を開始
         if self.x11.enabled:
-            self.x11.start_monitoring(self.update_window_list)
-            # 初回描画
+            self.x11.start_monitoring(self.queue_update)
             self.update_window_list()
 
         self.connect("realize", lambda w: self.align_to_bottom())
         self.connect("map-event", lambda w, e: self.align_to_bottom())
         self.show_all()
+
+    def queue_update(self):
+        if self._update_timer_id is not None:
+            GLib.source_remove(self._update_timer_id)
+        self._update_timer_id = GLib.timeout_add(100, self.update_window_list)
 
     def _setup_launcher(self):
         left_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -176,7 +172,6 @@ class ModernDock(Gtk.ApplicationWindow):
             try:
                 win_id = self.get_window().get_xid()
                 self.x11.set_strut(win_id, x, y, self.dock_w, config.DOCK_HEIGHT, geo.width, geo.height)
-                # ここで自分自身にドック設定と独自の識別タグを付与！
                 self.x11.set_dock_properties(win_id)
             except Exception as e:
                 print(f"Failed to set X11 properties: {e}")
@@ -208,14 +203,17 @@ class ModernDock(Gtk.ApplicationWindow):
         except: return None
 
     def update_window_list(self):
-        """ウィンドウリストを更新する（独自のタグをチェックして自分を除外する）"""
+        """ウィンドウリストを更新する（pcmanfmを名前リストから削除）"""
+        self._update_timer_id = None
+        
         window_ids = self.x11.get_window_list()
+        self.x11.clear_cache(window_ids)
+        
         current_buttons = {}
         for child in self.center_box.get_children():
             if hasattr(child, 'win_id'):
                 current_buttons[child.win_id] = child
 
-        # 削除処理
         for win_id, btn in list(current_buttons.items()):
             if win_id not in window_ids:
                 if config.ANIMATION_ENABLED:
@@ -226,12 +224,12 @@ class ModernDock(Gtk.ApplicationWindow):
                     self.center_box.remove(btn)
                     del current_buttons[win_id]
 
-        # 追加処理
         icon_size = int(config.DOCK_HEIGHT * 0.7)
         for win_id in window_ids:
             if win_id in current_buttons: continue
 
-            # --- ここで「無視すべきウィンドウか（自分自身か）」をチェック ---
+            # x11.is_ignored_window が SKIP_TASKBAR を見てくれるようになったから、
+            # デスクトップアイコンウィンドウだけを弾いてくれるはず！
             if self.x11.is_ignored_window(win_id):
                 continue
 
@@ -239,8 +237,9 @@ class ModernDock(Gtk.ApplicationWindow):
                 app_class = self.x11.get_window_class(win_id)
                 if not app_class: continue
                 
-                # 念のため名前でも追加チェック
-                if app_class in ["desktop_window", "dock", "gnome-shell", "xfce4-panel"]: continue
+                # pcmanfm はここから削除して、普通のウィンドウを出せるようにする！
+                if app_class in ["desktop_window", "dock", "gnome-shell", "xfce4-panel"]: 
+                    continue
 
                 icon_str = self._get_icon_string_for_class(app_class)
                 pixbuf = self.load_icon_pixbuf(icon_str, icon_size)
@@ -257,7 +256,8 @@ class ModernDock(Gtk.ApplicationWindow):
                 if config.ANIMATION_ENABLED: self._animate_button_entry(btn)
             except Exception as e:
                 print(f"Error adding button: {e}")
-        return True
+                
+        return False
 
     def _animate_button_entry(self, widget):
         easing_func = getattr(animation.Easing, config.ANIMATION_EASING, animation.Easing.ease_out_quad)
@@ -271,7 +271,8 @@ class ModernDock(Gtk.ApplicationWindow):
         easing_func = getattr(animation.Easing, config.ANIMATION_EASING, animation.Easing.ease_out_quad)
         def on_update(val): widget.set_opacity(1.0 - val)
         def on_complete():
-            self.center_box.remove(widget)
+            if widget.get_parent() == self.center_box:
+                self.center_box.remove(widget)
             widget.destroy()
         anim = animation.Animator(duration_ms=config.ANIMATION_DURATION, update_callback=on_update, complete_callback=on_complete, easing_func=easing_func)
         anim.start()

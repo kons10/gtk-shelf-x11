@@ -6,7 +6,6 @@ import shutil
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib, Gio, GdkPixbuf
 
-# 分割したファイルをインポート
 import config
 from x11_helper import X11Helper
 import animation
@@ -18,9 +17,9 @@ class ModernDock(Gtk.ApplicationWindow):
         self.set_title("Modern Dock")
         self.set_type_hint(Gdk.WindowTypeHint.DOCK)
         
-        # X11ヘルパーの初期化
         self.x11 = X11Helper()
         self._update_timer_id = None
+        self._hover_timer_id = None # ホバー判定用のタイマーID
         
         self.dock_w = 0
         self.update_geometry()
@@ -173,8 +172,7 @@ class ModernDock(Gtk.ApplicationWindow):
                 win_id = self.get_window().get_xid()
                 self.x11.set_strut(win_id, x, y, self.dock_w, config.DOCK_HEIGHT, geo.width, geo.height)
                 self.x11.set_dock_properties(win_id)
-            except Exception as e:
-                print(f"Failed to set X11 properties: {e}")
+            except: pass
         return False
 
     def build_icon_cache(self):
@@ -203,9 +201,7 @@ class ModernDock(Gtk.ApplicationWindow):
         except: return None
 
     def update_window_list(self):
-        """ウィンドウリストを更新する（pcmanfmを名前リストから削除）"""
         self._update_timer_id = None
-        
         window_ids = self.x11.get_window_list()
         self.x11.clear_cache(window_ids)
         
@@ -227,19 +223,12 @@ class ModernDock(Gtk.ApplicationWindow):
         icon_size = int(config.DOCK_HEIGHT * 0.7)
         for win_id in window_ids:
             if win_id in current_buttons: continue
-
-            # x11.is_ignored_window が SKIP_TASKBAR を見てくれるようになったから、
-            # デスクトップアイコンウィンドウだけを弾いてくれるはず！
-            if self.x11.is_ignored_window(win_id):
-                continue
+            if self.x11.is_ignored_window(win_id): continue
 
             try:
                 app_class = self.x11.get_window_class(win_id)
                 if not app_class: continue
-                
-                # pcmanfm はここから削除して、普通のウィンドウを出せるようにする！
-                if app_class in ["desktop_window", "dock", "gnome-shell", "xfce4-panel"]: 
-                    continue
+                if app_class in ["desktop_window", "dock", "gnome-shell", "xfce4-panel"]: continue
 
                 icon_str = self._get_icon_string_for_class(app_class)
                 pixbuf = self.load_icon_pixbuf(icon_str, icon_size)
@@ -247,6 +236,11 @@ class ModernDock(Gtk.ApplicationWindow):
                 btn = Gtk.Button()
                 btn.get_style_context().add_class("app-button")
                 btn.win_id = win_id
+                
+                # ホバーイベントの接続
+                btn.connect("enter-notify-event", self.on_button_enter)
+                btn.connect("leave-notify-event", self.on_button_leave)
+                
                 img = Gtk.Image()
                 if pixbuf: img.set_from_pixbuf(pixbuf)
                 btn.add(img)
@@ -254,10 +248,38 @@ class ModernDock(Gtk.ApplicationWindow):
                 self.center_box.pack_start(btn, False, False, 0)
                 btn.show_all()
                 if config.ANIMATION_ENABLED: self._animate_button_entry(btn)
-            except Exception as e:
-                print(f"Error adding button: {e}")
-                
+            except: pass
         return False
+
+    def on_button_enter(self, button, event):
+        """マウスが入ったら1秒のタイマーを開始"""
+        if self._hover_timer_id:
+            GLib.source_remove(self._hover_timer_id)
+        
+        # 1000ms (1秒) 後に名前を取得して表示する
+        self._hover_timer_id = GLib.timeout_add(1000, self.show_hover_title, button)
+
+    def on_button_leave(self, button, event):
+        """マウスが出たらタイマーをキャンセルしてツールチップを隠す"""
+        if self._hover_timer_id:
+            GLib.source_remove(self._hover_timer_id)
+            self._hover_timer_id = None
+        
+        # 表示中のツールチップがあれば消す
+        button.set_has_tooltip(False)
+
+    def show_hover_title(self, button):
+        """1秒経過した瞬間に実行される処理"""
+        if hasattr(button, 'win_id'):
+            # ここで初めて名前を取得（リアルタイム）
+            win_name = self.x11.get_window_name(button.win_id)
+            button.set_tooltip_text(win_name)
+            # GTKにツールチップを今すぐ出すよう促す（内部的なフラグ立て）
+            button.set_has_tooltip(True)
+            # マウスがまだボタンの上にあるはずなので、GTKが自動でツールチップを表示してくれる
+        
+        self._hover_timer_id = None
+        return False # 一回きりの実行
 
     def _animate_button_entry(self, widget):
         easing_func = getattr(animation.Easing, config.ANIMATION_EASING, animation.Easing.ease_out_quad)
@@ -306,9 +328,9 @@ class ModernDock(Gtk.ApplicationWindow):
             if shutil.which(executable):
                 GLib.spawn_command_line_async(launcher_cmd)
                 return
-        except Exception as e: print(f"Direct execution failed: {e}")
+        except: pass
         desktop_id = launcher_cmd if launcher_cmd.endswith(".desktop") else f"{launcher_cmd}.desktop"
         app_info = Gio.DesktopAppInfo.new(desktop_id)
         if app_info:
             try: app_info.launch([], Gdk.AppLaunchContext())
-            except Exception as e: print(f"Desktop launch error: {e}")
+            except: pass

@@ -2,7 +2,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, GLib
 
-# X11操作用ライブラリの読み込みを試みる
+# X11操作用ライブラリの読み込み
 try:
     from Xlib import display, X
     from Xlib.protocol import event as xevent
@@ -26,13 +26,15 @@ class X11Helper:
                 self.atom_client_list = self.display.intern_atom('_NET_CLIENT_LIST')
                 self.atom_active_window = self.display.intern_atom('_NET_ACTIVE_WINDOW')
                 self.atom_wm_change_state = self.display.intern_atom('WM_CHANGE_STATE')
+                self.atom_wm_name = self.display.intern_atom('_NET_WM_NAME')
+                self.atom_utf8_string = self.display.intern_atom('UTF8_STRING')
                 
-                # Strut (場所取り) 用のAtom
+                # Strut用
                 self.atom_strut = self.display.intern_atom('_NET_WM_STRUT')
                 self.atom_strut_partial = self.display.intern_atom('_NET_WM_STRUT_PARTIAL')
                 self.atom_cardinal = self.display.intern_atom('CARDINAL')
                 
-                # ウィンドウのタイプと状態用のAtom
+                # ウィンドウタイプ
                 self.atom_window_type = self.display.intern_atom('_NET_WM_WINDOW_TYPE')
                 self.atom_type_dock = self.display.intern_atom('_NET_WM_WINDOW_TYPE_DOCK')
                 self.atom_type_desktop = self.display.intern_atom('_NET_WM_WINDOW_TYPE_DESKTOP')
@@ -53,7 +55,6 @@ class X11Helper:
         try:
             fd = self.display.display.socket.fileno()
             GLib.io_add_watch(fd, GLib.IO_IN, self._on_x_event)
-            print("X11 event monitoring started.")
         except Exception as e:
             print(f"Failed to start X11 monitoring: {e}")
 
@@ -68,9 +69,22 @@ class X11Helper:
             
             if needs_update and self.callback:
                 self.callback()
-        except Exception as e:
-            print(f"Error in event loop: {e}")
+        except: pass
         return True
+
+    def get_window_name(self, win_id):
+        """指定されたウィンドウのタイトルを取得する（最新の状態をその場で取得）"""
+        if not self.enabled: return "Unknown"
+        try:
+            win = self.display.create_resource_object('window', win_id)
+            # まずはUTF-8で取得を試みる
+            prop = win.get_full_property(self.atom_wm_name, self.atom_utf8_string)
+            if prop and prop.value:
+                return prop.value.decode('utf-8')
+            # 失敗したら標準のWM_NAMEを試す
+            return win.get_wm_name() or "Window"
+        except:
+            return "Window"
 
     def set_dock_properties(self, win_id):
         if not self.enabled: return
@@ -80,44 +94,28 @@ class X11Helper:
             window.change_property(self.atom_wm_state, self.atom_atom, 32, [self.atom_state_skip_taskbar, self.atom_state_skip_pager])
             window.change_property(self.atom_skip_shelf, self.atom_cardinal, 32, [1])
             self.display.flush()
-        except Exception as e:
-            print(f"Error setting dock properties: {e}")
+        except: pass
 
     def is_ignored_window(self, win_id):
-        """指定したウィンドウが除外対象かチェックする (状態チェックを強化)"""
         if not self.enabled: return False
-        
-        # タイトルが取得できないなどの一時的な問題でキャッシュしたくないので、
-        # 基本的にプロパティベースの除外だけキャッシュする
-        if win_id in self._ignore_cache:
-            return self._ignore_cache[win_id]
-            
+        if win_id in self._ignore_cache: return self._ignore_cache[win_id]
         try:
             win = self.display.create_resource_object('window', win_id)
-            
-            # 1. 独自のタグが付いているか (自分自身)
             prop = win.get_full_property(self.atom_skip_shelf, self.atom_cardinal)
             if prop and prop.value and prop.value[0] == 1:
                 self._ignore_cache[win_id] = True
                 return True
-                
-            # 2. ウィンドウタイプを確認 (ドックやデスクトップ)
             type_prop = win.get_full_property(self.atom_window_type, self.atom_atom)
             if type_prop and type_prop.value:
                 if self.atom_type_dock in type_prop.value or self.atom_type_desktop in type_prop.value:
                     self._ignore_cache[win_id] = True
                     return True
-
-            # 3. _NET_WM_STATE を確認 (SKIP_TASKBAR が設定されているか)
-            # デスクトップアイコン描画ウィンドウなどはこれが設定されている
             state_prop = win.get_full_property(self.atom_wm_state, self.atom_atom)
             if state_prop and state_prop.value:
                 if self.atom_state_skip_taskbar in state_prop.value:
                     self._ignore_cache[win_id] = True
                     return True
-        except:
-            pass
-            
+        except: pass
         return False
 
     def clear_cache(self, current_ids):
@@ -134,8 +132,7 @@ class X11Helper:
             window.change_property(self.atom_strut_partial, self.atom_cardinal, 32, strut_partial)
             window.change_property(self.atom_strut, self.atom_cardinal, 32, strut)
             self.display.flush()
-        except Exception as e:
-            print(f"Error setting strut: {e}")
+        except: pass
 
     def get_window_list(self):
         if not self.enabled: return []
@@ -143,9 +140,7 @@ class X11Helper:
             prop = self.root.get_full_property(self.atom_client_list, X.AnyPropertyType)
             if not prop: return []
             return prop.value
-        except Exception as e:
-            print(f"Error getting window list: {e}")
-            return []
+        except: return []
 
     def get_window_class(self, win_id):
         if not self.enabled: return None
@@ -161,9 +156,7 @@ class X11Helper:
         try:
             prop = self.root.get_full_property(self.atom_active_window, X.AnyPropertyType)
             if prop and prop.value: return prop.value[0]
-        except Exception as e:
-            print(f"Error getting active window: {e}")
-        return None
+        except: return None
 
     def activate_window(self, win_id):
         if not self.enabled: return
@@ -173,8 +166,7 @@ class X11Helper:
             ev = xevent.ClientMessage(window=win, client_type=self.atom_active_window, data=(32, data))
             self.root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
             self.display.flush()
-        except Exception as e:
-            print(f"Error activating window: {e}")
+        except: pass
 
     def minimize_window(self, win_id):
         if not self.enabled: return
@@ -184,5 +176,4 @@ class X11Helper:
             ev = xevent.ClientMessage(window=win, client_type=self.atom_wm_change_state, data=(32, data))
             self.root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
             self.display.flush()
-        except Exception as e:
-            print(f"Error minimizing window: {e}")
+        except: pass

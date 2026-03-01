@@ -67,6 +67,13 @@ class ModernDock(Gtk.ApplicationWindow):
             self.x11.start_monitoring(self.queue_update)
             self.update_window_list()
 
+# --- ここから追加 ---
+        # 画面サイズやモニター構成の変更を検知
+        screen = Gdk.Screen.get_default()
+        screen.connect("size-changed", self.on_screen_changed)
+        screen.connect("monitors-changed", self.on_screen_changed)
+        # --- ここまで追加 ---
+
         self.connect("realize", lambda w: self.align_to_bottom())
         self.connect("map-event", lambda w, e: self.align_to_bottom())
         self.show_all()
@@ -334,3 +341,9 @@ class ModernDock(Gtk.ApplicationWindow):
         if app_info:
             try: app_info.launch([], Gdk.AppLaunchContext())
             except: pass
+
+# --- ここから追加 ---
+    def on_screen_changed(self, screen):
+        """画面レイアウトが変わった時にサイズと位置を再計算する"""
+        self.update_geometry()
+        self.align_to_bottom()

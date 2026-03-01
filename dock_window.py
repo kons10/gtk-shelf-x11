@@ -342,7 +342,6 @@ class ModernDock(Gtk.ApplicationWindow):
             try: app_info.launch([], Gdk.AppLaunchContext())
             except: pass
 
-# --- ここから追加 ---
     def on_screen_changed(self, screen):
         """画面レイアウトが変わった時にサイズと位置を再計算する"""
         self.update_geometry()

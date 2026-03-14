@@ -33,7 +33,7 @@ sudo apt install python3-gi python3-xlib gir1.2-gtk-3.0 fonts-roboto
 ### Termux Android
 
 ```bash
-pkg install pygobject python3-xlib gir1.2-gtk-3.0 fonts-roboto
+pkg install pygobject python-xlib gir1.2-gtk-3.0 fonts-roboto
 
 ```
 

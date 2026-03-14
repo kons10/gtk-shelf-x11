@@ -30,6 +30,12 @@ sudo pacman -S python-gobject python-xlib gtk3 roboto-fonts
 sudo apt install python3-gi python3-xlib gir1.2-gtk-3.0 fonts-roboto
 
 ```
+### Termux Android
+
+```bash
+pkg install python3-gi python3-xlib gir1.2-gtk-3.0 fonts-roboto
+
+```
 
 ### Red Hat-based systems
 
